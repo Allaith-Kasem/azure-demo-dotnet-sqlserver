@@ -1,0 +1,38 @@
+@model IEnumerable<PropertyDemo.Models.Property>
+
+@{
+    ViewData["Title"] = "Properties";
+}
+
+<h1>Property Listings</h1>
+
+<p>
+    <a asp-action="Create" class="btn btn-primary">Add Property</a>
+</p>
+
+@if (!Model.Any())
+{
+    <p>No properties have been added yet.</p>
+}
+else
+{
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Location</th>
+                <th>Price (AED)</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var property in Model)
+        {
+            <tr>
+                <td>@property.Name</td>
+                <td>@property.Location</td>
+                <td>@property.Price.ToString("N2")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}

@@ -1,0 +1,21 @@
+# Build output
+bin/
+obj/
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+
+# Local configuration and secrets
+appsettings.Development.json
+secrets.json
+.env
+.env.*
+
+# User-specific files
+*.user
+*.suo
+
+# Logs
+*.log
