@@ -1,53 +1,86 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-
-name: Build and deploy ASP.Net Core app to Azure Web App - app-propertydemo-dev-001
+name: Build, migrate and deploy ASP.NET Core app
 
 on:
   push:
     branches:
-      - 'main'
+      - main
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read #This is required for actions/checkout
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-      - name: Set up .NET Core
+      - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0'
+          dotnet-version: '10.0.x'
 
-      - name: Build with dotnet
-        run: dotnet build --configuration Release
+      - name: Restore dependencies
+        run: dotnet restore PropertyDemo.csproj
 
-      - name: dotnet publish
-        run: dotnet publish -c Release -o ${{env.DOTNET_ROOT}}/myapp
+      - name: Build application
+        run: dotnet build PropertyDemo.csproj --configuration Release --no-restore
 
-      - name: Upload artifact for deployment job
+      - name: Publish application
+        run: dotnet publish PropertyDemo.csproj --configuration Release --no-build -o "${{ runner.temp }}/myapp"
+
+      - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
         with:
           name: .net-app
-          path: ${{env.DOTNET_ROOT}}/myapp
+          path: ${{ runner.temp }}/myapp
 
-  deploy:
+  migrate-database:
     runs-on: ubuntu-latest
     needs: build
     permissions:
-      id-token: write #This is required for requesting the JWT
-      contents: read #This is required for actions/checkout
+      contents: read
 
     steps:
-      - name: Download artifact from build job
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore PropertyDemo.csproj
+
+      - name: Install EF Core CLI
+        run: |
+          dotnet tool install --global dotnet-ef --version '10.*'
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Apply pending database migrations
+        env:
+          ConnectionStrings__DefaultConnection: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
+        run: dotnet ef database update --project PropertyDemo.csproj
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: migrate-database
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Download deployment artifact
         uses: actions/download-artifact@v4
         with:
           name: .net-app
-      
+          path: ./publish
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -56,10 +89,9 @@ jobs:
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_C4E3B41D92634AE7898B8CA00487563B }}
 
       - name: Deploy to Azure Web App
-        id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'app-propertydemo-dev-001'
           slot-name: 'Production'
-          package: .
-          
+          package: ./publish
+
