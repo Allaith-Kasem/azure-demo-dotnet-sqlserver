@@ -42,5 +42,28 @@ app.MapControllerRoute(
     pattern: "{controller=Home}/{action=Index}/{id?}")
     .WithStaticAssets();
 
+app.Use(async (context, next) =>
+{
+    context.Response.OnStarting(() =>
+    {
+        var headers = context.Response.Headers;
+
+        headers["X-Content-Type-Options"] = "nosniff";
+        headers["X-Frame-Options"] = "DENY";
+
+        headers["Content-Security-Policy"] =
+            "default-src 'self'; " +
+            "object-src 'none'; " +
+            "base-uri 'self'; " +
+            "frame-ancestors 'none'";
+
+        headers["Permissions-Policy"] =
+            "camera=(), microphone=(), geolocation=()";
+
+        return Task.CompletedTask;
+    });
+
+    await next();
+});
 
 app.Run();
