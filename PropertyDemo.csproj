@@ -5,6 +5,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>fd6dceff-4728-4dd7-87a9-6e751ea6c144</UserSecretsId>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditLevel>high</NuGetAuditLevel>
+    <NuGetAuditMode>all</NuGetAuditMode>
   </PropertyGroup>
 
   <ItemGroup>
