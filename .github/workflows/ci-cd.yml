@@ -187,8 +187,23 @@ jobs:
       - name: Apply pending database migrations
         env:
           ConnectionStrings__DefaultConnection: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
-        run: dotnet ef database update --project PropertyDemo.csproj
+        run: |
+          for attempt in {1..5}; do
+            echo "Database migration attempt $attempt of 5"
 
+            if dotnet ef database update --project PropertyDemo.csproj; then
+              echo "Database migrations completed successfully."
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 5 ]; then
+              echo "Database migration failed after 5 attempts."
+              exit 1
+            fi
+
+            echo "Migration failed. Waiting 20 seconds before retry..."
+            sleep 20
+          done
   # ==========================================
   # STAGE 5: DEPLOYMENT
   # ==========================================
