@@ -1,0 +1,248 @@
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+
+  # ==========================================
+  # STAGE 1: PARALLEL SECURITY CHECKS
+  # ==========================================
+
+  secret-scan:
+    name: Secret Scanning - Gitleaks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan for exposed secrets
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sast:
+    name: Static Analysis - CodeQL
+    runs-on: ubuntu-latest
+
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+
+      - name: Build application
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+
+  semgrep:
+    name: SAST - Semgrep
+    runs-on: ubuntu-latest
+
+    container:
+      image: semgrep/semgrep
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: semgrep scan --config auto --error .
+
+  dependency-scan:
+    name: Dependency Vulnerability Scan - NuGet
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Check for vulnerable dependencies
+        run: dotnet list package --vulnerable --include-transitive
+
+  # ==========================================
+  # STAGE 2: BUILD
+  # Runs only if ALL security checks succeed
+  # ==========================================
+
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+
+    needs:
+      - secret-scan
+      - sast
+      - semgrep
+      - dependency-scan
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build application
+        run: dotnet publish --configuration Release --output ./publish
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: .net-app
+          path: ./publish
+          if-no-files-found: error
+
+  # ==========================================
+  # STAGE 3: TESTING
+  # ==========================================
+
+  test:
+    name: Run Application Tests
+    runs-on: ubuntu-latest
+
+    needs: build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Run tests
+        run: dotnet test --configuration Release --no-restore
+
+  # ==========================================
+  # STAGE 4: DATABASE MIGRATION
+  # ==========================================
+
+  migrate-database:
+    name: Apply Database Migrations
+    runs-on: ubuntu-latest
+
+    needs:
+      - test
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore PropertyDemo.csproj
+
+      - name: Install EF Core CLI
+        run: |
+          dotnet tool install --global dotnet-ef --version '10.*'
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Apply pending database migrations
+        env:
+          ConnectionStrings__DefaultConnection: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
+        run: dotnet ef database update --project PropertyDemo.csproj
+
+  # ==========================================
+  # STAGE 5: DEPLOYMENT
+  # ==========================================
+
+  deploy:
+    name: Deploy to Azure App Service
+    runs-on: ubuntu-latest
+
+    needs:
+      - migrate-database
+
+    if: github.event_name != 'pull_request'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Download deployment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: .net-app
+          path: ./publish
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_3CFEB8979745475DA742DE38B272D7B2 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_530CC0A625744433B2B9A7C1F6F5ED72 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_C4E3B41D92634AE7898B8CA00487563B }}
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: app-propertydemo-dev-001
+          slot-name: Production
+          package: ./publish
+
+  # ==========================================
+  # STAGE 6: DAST
+  # ==========================================
+
+  dast:
+    name: Dynamic Analysis - OWASP ZAP
+    runs-on: ubuntu-latest
+
+    needs:
+      - deploy
+
+    steps:
+      - name: Run OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: ${{ vars.DAST_TARGET_URL }}
+          fail_action: true
+
+
